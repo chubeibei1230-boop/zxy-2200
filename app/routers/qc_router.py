@@ -9,6 +9,60 @@ from app.services import anomaly_detector
 qc_router = APIRouter(prefix="/api/qc", tags=["品控操作"])
 
 
+def _generate_recheck_app_no(db: Session) -> str:
+    today = datetime.utcnow().strftime("%Y%m%d")
+    prefix = f"RC{today}"
+    last = db.query(models.RecheckApplication).filter(
+        models.RecheckApplication.application_no.like(f"{prefix}%")
+    ).order_by(models.RecheckApplication.application_no.desc()).first()
+    if last:
+        seq = int(last.application_no[-4:]) + 1
+    else:
+        seq = 1
+    return f"{prefix}{seq:04d}"
+
+
+def _auto_create_recheck_from_qc(
+    db: Session,
+    inspection: models.QCInspection,
+    batch: models.MaterialBatch,
+    current_user: models.User
+):
+    pending_exists = db.query(models.RecheckApplication).filter(
+        models.RecheckApplication.batch_id == batch.id,
+        models.RecheckApplication.status.in_([
+            models.RecheckStatus.PENDING.value,
+            models.RecheckStatus.IN_PROGRESS.value
+        ])
+    ).first()
+    if pending_exists:
+        return
+
+    recheck_reason = models.RecheckReason.SCORE_BORDERLINE.value
+    reason_detail = None
+    if inspection.taste_deviation:
+        recheck_reason = models.RecheckReason.TASTE_DEVIATION.value
+        reason_detail = inspection.taste_deviation
+    elif inspection.overall_score and inspection.overall_score < 60:
+        recheck_reason = models.RecheckReason.APPEARANCE_ISSUE.value
+
+    application = models.RecheckApplication(
+        application_no=_generate_recheck_app_no(db),
+        batch_id=batch.id,
+        store_id=batch.store_id,
+        source_qc_inspection_id=inspection.id,
+        recheck_source=models.RecheckSource.QC_INSPECTION.value,
+        recheck_reason=recheck_reason,
+        reason_detail=reason_detail,
+        supplementary_note=f"品控抽检结论: {inspection.disposition}. 说明: {inspection.disposition_note or ''}",
+        status=models.RecheckStatus.PENDING.value,
+        deadline_hours=24,
+        applied_by=current_user.id,
+        applied_at=datetime.utcnow()
+    )
+    db.add(application)
+
+
 @qc_router.post("/inspections", response_model=schemas.QCInspectionResponse)
 def create_qc_inspection(
     qc_in: schemas.QCInspectionCreate,
@@ -56,6 +110,7 @@ def create_qc_inspection(
             batch.final_disposition = qc_in.disposition_note or qc_in.disposition
         elif "留观" in qc_in.disposition or "复检" in qc_in.disposition:
             batch.status = models.BatchStatus.ANOMALY_HOLD.value
+            _auto_create_recheck_from_qc(db, inspection, batch, current_user)
     db.commit()
     db.refresh(inspection)
     return inspection
@@ -95,6 +150,7 @@ def update_qc_inspection(
             batch.final_disposition = qc_in.disposition_note or qc_in.disposition
         elif "留观" in qc_in.disposition or "复检" in qc_in.disposition:
             batch.status = models.BatchStatus.ANOMALY_HOLD.value
+            _auto_create_recheck_from_qc(db, inspection, batch, current_user)
     db.commit()
     db.refresh(inspection)
     return inspection

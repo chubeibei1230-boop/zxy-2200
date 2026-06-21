@@ -31,6 +31,37 @@ class AnomalyType(str, enum.Enum):
     CONCENTRATED_ANOMALY = "concentrated_anomaly"
 
 
+class RecheckStatus(str, enum.Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    PASSED = "passed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class RecheckSource(str, enum.Enum):
+    QC_INSPECTION = "qc_inspection"
+    ANOMALY_HOLD = "anomaly_hold"
+    STORE_INITIATIVE = "store_initiative"
+    HQ_ASSIGN = "hq_assign"
+
+
+class RecheckResult(str, enum.Enum):
+    QUALIFIED = "qualified"
+    UNQUALIFIED = "unqualified"
+    FURTHER_RECHECK = "further_recheck"
+
+
+class RecheckReason(str, enum.Enum):
+    SCORE_BORDERLINE = "score_borderline"
+    TASTE_DEVIATION = "taste_deviation"
+    APPEARANCE_ISSUE = "appearance_issue"
+    TEMPERATURE_ABNORMAL = "temperature_abnormal"
+    ANOMALY_EVENT = "anomaly_event"
+    CUSTOMER_COMPLAINT = "customer_complaint"
+    OTHER = "other"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -276,3 +307,50 @@ class AnomalyEvent(Base):
 
     batch = relationship("MaterialBatch", back_populates="anomaly_events")
     resolver = relationship("User", foreign_keys=[resolved_by])
+
+
+class RecheckApplication(Base):
+    __tablename__ = "recheck_applications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_no = Column(String(50), unique=True, index=True, nullable=False)
+    batch_id = Column(Integer, ForeignKey("material_batches.id"), nullable=False)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
+    source_qc_inspection_id = Column(Integer, ForeignKey("qc_inspections.id"), nullable=True)
+    source_anomaly_event_id = Column(Integer, ForeignKey("anomaly_events.id"), nullable=True)
+    recheck_source = Column(String(30), nullable=False, default=RecheckSource.STORE_INITIATIVE.value)
+    recheck_reason = Column(String(50), nullable=False, default=RecheckReason.OTHER.value)
+    reason_detail = Column(Text)
+    supplementary_note = Column(Text)
+    status = Column(String(30), nullable=False, default=RecheckStatus.PENDING.value)
+    recheck_result = Column(String(30), nullable=True)
+    deadline_hours = Column(Integer, default=24)
+    applied_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    applied_at = Column(DateTime, default=datetime.utcnow)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    assigned_at = Column(DateTime, nullable=True)
+    recheck_started_at = Column(DateTime, nullable=True)
+    recheck_completed_at = Column(DateTime, nullable=True)
+    recheck_template_id = Column(Integer, ForeignKey("qc_templates.id"), nullable=True)
+    appearance_score = Column(Float, nullable=True)
+    taste_score = Column(Float, nullable=True)
+    texture_score = Column(Float, nullable=True)
+    overall_score = Column(Float, nullable=True)
+    recheck_check_result = Column(Text, nullable=True)
+    recheck_disposition_note = Column(Text, nullable=True)
+    rechecked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    batch = relationship("MaterialBatch")
+    store = relationship("Store")
+    source_qc_inspection = relationship("QCInspection", foreign_keys=[source_qc_inspection_id])
+    source_anomaly_event = relationship("AnomalyEvent", foreign_keys=[source_anomaly_event_id])
+    applicant = relationship("User", foreign_keys=[applied_by])
+    assignee = relationship("User", foreign_keys=[assigned_to])
+    rechecker = relationship("User", foreign_keys=[rechecked_by])
+    canceller = relationship("User", foreign_keys=[cancelled_by])
+    recheck_template = relationship("QCTemplate", foreign_keys=[recheck_template_id])

@@ -100,12 +100,28 @@ def get_qc_todos(
         has_qc = db.query(models.QCInspection).filter(
             models.QCInspection.batch_id == batch.id
         ).first()
-        if has_qc and batch.status != models.BatchStatus.ANOMALY_HOLD.value:
+
+        pending_recheck = db.query(models.RecheckApplication).filter(
+            models.RecheckApplication.batch_id == batch.id,
+            models.RecheckApplication.status.in_([
+                models.RecheckStatus.PENDING.value,
+                models.RecheckStatus.IN_PROGRESS.value
+            ])
+        ).first()
+
+        task_type = "首次抽检"
+        pending_base_time = batch.production_complete_time
+        if pending_recheck:
+            task_type = "复检任务"
+            pending_base_time = pending_recheck.applied_at
+        elif has_qc and batch.status != models.BatchStatus.ANOMALY_HOLD.value:
             continue
-        if batch.production_complete_time:
-            pending_hours = round((now - batch.production_complete_time).total_seconds() / 3600, 1)
+
+        if pending_base_time:
+            pending_hours = round((now - pending_base_time).total_seconds() / 3600, 1)
         else:
             pending_hours = 0.0
+
         if pending_hours >= hours_threshold * 2:
             priority = "紧急"
         elif pending_hours >= hours_threshold:
@@ -118,17 +134,25 @@ def get_qc_todos(
         cat = db.query(models.IngredientCategory).filter(
             models.IngredientCategory.id == batch.ingredient_category_id
         ).first()
-        todo_list.append({
+
+        todo_item = {
             "batch_id": batch.id,
             "batch_no": batch.batch_no,
             "store_id": batch.store_id,
             "store_name": store.store_name if store else "未知",
             "category_name": cat.category_name if cat else "未知",
             "status": batch.status,
+            "task_type": task_type,
             "production_complete_time": batch.production_complete_time,
             "pending_hours": pending_hours,
             "priority": priority
-        })
+        }
+        if pending_recheck:
+            todo_item["recheck_application_id"] = pending_recheck.id
+            todo_item["recheck_application_no"] = pending_recheck.application_no
+            todo_item["recheck_reason"] = pending_recheck.recheck_reason
+            todo_item["recheck_assigned_to"] = pending_recheck.assigned_to
+        todo_list.append(todo_item)
     todo_list.sort(key=lambda x: x["pending_hours"], reverse=True)
     return todo_list
 
@@ -251,6 +275,59 @@ def get_overview(
         qc_query = qc_query.filter(models.QCInspection.store_id == store_id)
     total_qc_done = qc_query.scalar() or 0
 
+    recheck_query = db.query(models.RecheckApplication).filter(
+        models.RecheckApplication.applied_at >= cutoff
+    )
+    if store_id:
+        recheck_query = recheck_query.filter(models.RecheckApplication.store_id == store_id)
+    total_recheck = recheck_query.count()
+
+    recheck_status_counts = {}
+    recheck_status_query = db.query(
+        models.RecheckApplication.status,
+        func.count(models.RecheckApplication.id)
+    ).filter(
+        models.RecheckApplication.applied_at >= cutoff
+    )
+    if store_id:
+        recheck_status_query = recheck_status_query.filter(
+            models.RecheckApplication.store_id == store_id
+        )
+    recheck_status_query = recheck_status_query.group_by(models.RecheckApplication.status)
+    for rs, cnt in recheck_status_query.all():
+        recheck_status_counts[rs] = cnt
+
+    recheck_result_counts = {}
+    recheck_result_query = db.query(
+        models.RecheckApplication.recheck_result,
+        func.count(models.RecheckApplication.id)
+    ).filter(
+        models.RecheckApplication.applied_at >= cutoff,
+        models.RecheckApplication.recheck_result != None
+    )
+    if store_id:
+        recheck_result_query = recheck_result_query.filter(
+            models.RecheckApplication.store_id == store_id
+        )
+    recheck_result_query = recheck_result_query.group_by(models.RecheckApplication.recheck_result)
+    for rr, cnt in recheck_result_query.all():
+        recheck_result_counts[rr] = cnt
+
+    now = datetime.utcnow()
+    overdue_query = db.query(models.RecheckApplication).filter(
+        models.RecheckApplication.status.in_([
+            models.RecheckStatus.PENDING.value,
+            models.RecheckStatus.IN_PROGRESS.value
+        ])
+    )
+    if store_id:
+        overdue_query = overdue_query.filter(models.RecheckApplication.store_id == store_id)
+    recheck_overdue = 0
+    for ra in overdue_query.all():
+        deadline = ra.applied_at + timedelta(hours=ra.deadline_hours)
+        if now > deadline:
+            recheck_overdue += 1
+
     return {
         "period_days": days,
         "store_id": store_id,
@@ -261,7 +338,11 @@ def get_overview(
         "total_cups_produced": total_cups,
         "total_cups_discarded": discarded_cups,
         "overall_discard_rate": overall_discard_rate,
-        "total_qc_inspections": total_qc_done
+        "total_qc_inspections": total_qc_done,
+        "total_recheck_applications": total_recheck,
+        "recheck_status_distribution": recheck_status_counts,
+        "recheck_result_distribution": recheck_result_counts,
+        "recheck_overdue_count": recheck_overdue
     }
 
 

@@ -432,3 +432,139 @@ class PaginatedResponse(BaseModel):
     page: int
     page_size: int
     items: List
+
+
+class RecheckApplicationBase(BaseModel):
+    batch_id: int
+    source_qc_inspection_id: Optional[int] = None
+    source_anomaly_event_id: Optional[int] = None
+    recheck_source: str = "store_initiative"
+    recheck_reason: str = "other"
+    reason_detail: Optional[str] = None
+    supplementary_note: Optional[str] = None
+    deadline_hours: Optional[int] = 24
+
+
+class RecheckApplicationCreate(RecheckApplicationBase):
+    pass
+
+
+class RecheckApplicationAssign(BaseModel):
+    assigned_to: int
+
+
+class RecheckApplicationExecute(BaseModel):
+    recheck_template_id: Optional[int] = None
+    appearance_score: Optional[float] = None
+    taste_score: Optional[float] = None
+    texture_score: Optional[float] = None
+    overall_score: Optional[float] = None
+    recheck_check_result: Optional[str] = None
+    recheck_disposition_note: Optional[str] = None
+    recheck_result: str
+
+
+class RecheckApplicationCancel(BaseModel):
+    cancel_reason: str
+
+
+class RecheckApplicationUpdate(BaseModel):
+    supplementary_note: Optional[str] = None
+    deadline_hours: Optional[int] = None
+
+
+class RecheckApplicationResponse(BaseModel):
+    id: int
+    application_no: str
+    batch_id: int
+    store_id: int
+    source_qc_inspection_id: Optional[int] = None
+    source_anomaly_event_id: Optional[int] = None
+    recheck_source: str
+    recheck_reason: str
+    reason_detail: Optional[str] = None
+    supplementary_note: Optional[str] = None
+    status: str
+    recheck_result: Optional[str] = None
+    deadline_hours: int
+    applied_by: int
+    applied_at: datetime
+    assigned_to: Optional[int] = None
+    assigned_at: Optional[datetime] = None
+    recheck_started_at: Optional[datetime] = None
+    recheck_completed_at: Optional[datetime] = None
+    recheck_template_id: Optional[int] = None
+    appearance_score: Optional[float] = None
+    taste_score: Optional[float] = None
+    texture_score: Optional[float] = None
+    overall_score: Optional[float] = None
+    recheck_check_result: Optional[str] = None
+    recheck_disposition_note: Optional[str] = None
+    rechecked_by: Optional[int] = None
+    cancelled_by: Optional[int] = None
+    cancelled_at: Optional[datetime] = None
+    cancel_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RecheckApplicationDetailResponse(RecheckApplicationResponse):
+    batch: Optional[MaterialBatchDetailResponse] = None
+    store: Optional[StoreResponse] = None
+    applicant: Optional[UserResponse] = None
+    assignee: Optional[UserResponse] = None
+    rechecker: Optional[UserResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RecheckFilterParams(BaseModel):
+    store_id: Optional[int] = None
+    batch_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    ingredient_category_id: Optional[int] = None
+    status: Optional[str] = None
+    recheck_result: Optional[str] = None
+    recheck_source: Optional[str] = None
+    recheck_reason: Optional[str] = None
+    assigned_to: Optional[int] = None
+    is_overdue: Optional[bool] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+
+
+class RecheckStatsItem(BaseModel):
+    status: str
+    count: int
+
+
+class RecheckResultDistributionItem(BaseModel):
+    result: str
+    count: int
+    percentage: float
+
+
+class RecheckOverdueItem(BaseModel):
+    application_id: int
+    application_no: str
+    batch_id: int
+    batch_no: str
+    store_id: int
+    store_name: str
+    category_name: str
+    status: str
+    applied_at: datetime
+    deadline_hours: int
+    overdue_hours: float
+    priority: str
+
+
+class RecheckOverviewStats(BaseModel):
+    total: int
+    pending: int
+    in_progress: int
+    passed: int
+    failed: int
+    cancelled: int
+    overdue: int
+    avg_processing_hours: float
