@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -139,7 +139,9 @@ def start_production(
         models.BatchStatus.READY_FOR_PRODUCTION.value,
     ]
     if batch.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"当前状态[{batch.status}]不可开始制作")
+        raise HTTPException(status_code=400, detail=f"当前状态[{batch.status}]不可开始制作，需先通过验收")
+    if not batch.wash_complete_time:
+        raise HTTPException(status_code=400, detail="清洗尚未完成，不可开始制作，请先标记清洗完成")
     batch.status = models.BatchStatus.IN_PRODUCTION.value
     batch.production_start_time = datetime.utcnow()
     db.commit()
@@ -159,6 +161,8 @@ def create_production_record(
     batch = db.query(models.MaterialBatch).filter(models.MaterialBatch.id == rec_in.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    if batch.status != models.BatchStatus.IN_PRODUCTION.value:
+        raise HTTPException(status_code=400, detail=f"当前批次状态[{batch.status}]不可创建制作记录，需先开始制作")
     store_id = _resolve_store_id(batch.store_id, current_user)
     station = db.query(models.ProductionStation).filter(
         models.ProductionStation.id == rec_in.station_id
@@ -260,6 +264,12 @@ def mark_saleable(
     ]
     if batch.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"当前状态[{batch.status}]不可标记为可销售")
+    if current_user.role == models.UserRole.STORE_STAFF.value:
+        qc_done = db.query(models.QCInspection).filter(
+            models.QCInspection.batch_id == batch_id
+        ).first()
+        if not qc_done:
+            raise HTTPException(status_code=403, detail="门店人员不可直接放行，请先由品控人员完成抽检")
     batch.status = models.BatchStatus.READY_FOR_SALE.value
     batch.sale_start_time = datetime.utcnow()
     db.commit()
@@ -314,7 +324,8 @@ def list_batches(
     if date_from:
         query = query.filter(models.MaterialBatch.created_at >= date_from)
     if date_to:
-        query = query.filter(models.MaterialBatch.created_at <= date_to)
+        date_to_end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        query = query.filter(models.MaterialBatch.created_at < date_to_end)
     return query.order_by(models.MaterialBatch.created_at.desc()).all()
 
 
@@ -394,5 +405,6 @@ def list_production_records(
     if date_from:
         query = query.filter(models.ProductionRecord.created_at >= date_from)
     if date_to:
-        query = query.filter(models.ProductionRecord.created_at <= date_to)
+        date_to_end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        query = query.filter(models.ProductionRecord.created_at < date_to_end)
     return query.order_by(models.ProductionRecord.created_at.desc()).all()

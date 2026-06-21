@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -21,6 +21,15 @@ def create_qc_inspection(
     batch = db.query(models.MaterialBatch).filter(models.MaterialBatch.id == qc_in.batch_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    valid_statuses = [
+        models.BatchStatus.PENDING_QC.value,
+        models.BatchStatus.ANOMALY_HOLD.value,
+    ]
+    if batch.status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前批次状态[{batch.status}]不可执行抽检，需待抽检或异常留观状态"
+        )
     if qc_in.template_id:
         tpl = db.query(models.QCTemplate).filter(models.QCTemplate.id == qc_in.template_id).first()
         if not tpl:
@@ -115,7 +124,8 @@ def list_qc_inspections(
     if date_from:
         query = query.filter(models.QCInspection.created_at >= date_from)
     if date_to:
-        query = query.filter(models.QCInspection.created_at <= date_to)
+        date_to_end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        query = query.filter(models.QCInspection.created_at < date_to_end)
     return query.order_by(models.QCInspection.created_at.desc()).all()
 
 
@@ -158,7 +168,8 @@ def list_anomalies(
     if date_from:
         query = query.filter(models.AnomalyEvent.created_at >= date_from)
     if date_to:
-        query = query.filter(models.AnomalyEvent.created_at <= date_to)
+        date_to_end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        query = query.filter(models.AnomalyEvent.created_at < date_to_end)
     return query.order_by(models.AnomalyEvent.detected_at.desc()).all()
 
 
