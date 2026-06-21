@@ -264,12 +264,11 @@ def mark_saleable(
     ]
     if batch.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"当前状态[{batch.status}]不可标记为可销售")
-    if current_user.role == models.UserRole.STORE_STAFF.value:
-        qc_done = db.query(models.QCInspection).filter(
-            models.QCInspection.batch_id == batch_id
-        ).first()
-        if not qc_done:
-            raise HTTPException(status_code=403, detail="门店人员不可直接放行，请先由品控人员完成抽检")
+    qc_done = db.query(models.QCInspection).filter(
+        models.QCInspection.batch_id == batch_id
+    ).first()
+    if not qc_done:
+        raise HTTPException(status_code=400, detail="未完成品控抽检，不可标记为可销售")
     batch.status = models.BatchStatus.READY_FOR_SALE.value
     batch.sale_start_time = datetime.utcnow()
     db.commit()
