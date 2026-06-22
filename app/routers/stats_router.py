@@ -5,7 +5,7 @@ from sqlalchemy import func, and_
 from typing import List, Optional, Dict, Any
 from app.database import get_db
 from app import models, schemas, auth
-from app.services import anomaly_detector
+from app.services import anomaly_detector, freshness_warning as warning_service
 
 stats_router = APIRouter(prefix="/api/stats", tags=["统计分析"])
 
@@ -342,7 +342,16 @@ def get_overview(
         "total_recheck_applications": total_recheck,
         "recheck_status_distribution": recheck_status_counts,
         "recheck_result_distribution": recheck_result_counts,
-        "recheck_overdue_count": recheck_overdue
+        "recheck_overdue_count": recheck_overdue,
+        "freshness_warning": warning_service.get_warning_stats_overview(
+            db, current_user, days=days, store_id=store_id
+        ),
+        "freshness_warning_trend": warning_service.get_warning_trend(
+            db, current_user, days=days, store_id=store_id
+        ),
+        "freshness_warning_level_distribution": warning_service.get_warning_level_distribution(
+            db, current_user, days=days, store_id=store_id
+        )
     }
 
 
@@ -354,5 +363,9 @@ def run_all_detections(
         models.UserRole.HQ_ADMIN.value
     ))
 ):
-    result = anomaly_detector.run_all_detections(db)
-    return result
+    anomaly_result = anomaly_detector.run_all_detections(db)
+    warning_result = warning_service.detect_freshness_warnings(db)
+    return {
+        "anomaly_detection": anomaly_result,
+        "freshness_warning_detection": warning_result
+    }

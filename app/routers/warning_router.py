@@ -60,6 +60,111 @@ def list_warnings(
     return warnings
 
 
+@warning_router.get("/my-pending", response_model=List[schemas.FreshnessWarningDetailResponse])
+def get_my_pending_warnings(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.FreshnessWarning).filter(
+        models.FreshnessWarning.status.in_([
+            models.WarningStatus.PENDING.value,
+            models.WarningStatus.PROCESSING.value
+        ])
+    )
+    query = _apply_data_scope(query, current_user)
+
+    if current_user.role == models.UserRole.QC_STAFF.value:
+        query = query.filter(
+            models.FreshnessWarning.stage.in_([
+                models.WarningStage.AFTER_PRODUCTION.value,
+                models.WarningStage.PENDING_QC.value
+            ])
+        )
+
+    return query.order_by(
+        models.FreshnessWarning.is_overdue.desc(),
+        models.FreshnessWarning.warning_level.desc(),
+        models.FreshnessWarning.created_at.asc()
+    ).all()
+
+
+@warning_router.get("/batches/{batch_id}", response_model=List[schemas.FreshnessWarningResponse])
+def get_batch_warnings(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = db.query(models.MaterialBatch).filter(
+        models.MaterialBatch.id == batch_id
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="批次不存在")
+
+    if current_user.role == models.UserRole.STORE_STAFF.value:
+        if batch.store_id != current_user.store_id:
+            raise HTTPException(status_code=403, detail="无权限查看其他门店数据")
+
+    warnings = db.query(models.FreshnessWarning).filter(
+        models.FreshnessWarning.batch_id == batch_id
+    ).order_by(models.FreshnessWarning.created_at.desc()).all()
+
+    return warnings
+
+
+@warning_router.get("/statistics/overview", response_model=schemas.WarningStatsOverview)
+def get_warning_stats(
+    store_id: Optional[int] = None,
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    stats = warning_service.get_warning_stats_overview(
+        db, current_user, days=days, store_id=store_id
+    )
+    return stats
+
+
+@warning_router.get("/statistics/trend", response_model=List[Dict[str, Any]])
+def get_trend(
+    store_id: Optional[int] = None,
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    trend = warning_service.get_warning_trend(
+        db, current_user, days=days, store_id=store_id
+    )
+    return trend
+
+
+@warning_router.get("/statistics/store-ranking", response_model=List[Dict[str, Any]])
+def get_store_ranking(
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    limit: int = Query(20, ge=1, le=100, description="返回条数"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_role(
+        models.UserRole.HQ_ADMIN.value
+    ))
+):
+    ranking = warning_service.get_store_ranking(
+        db, current_user, days=days, limit=limit
+    )
+    return ranking
+
+
+@warning_router.get("/statistics/level-distribution", response_model=List[Dict[str, Any]])
+def get_level_distribution(
+    store_id: Optional[int] = None,
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    distribution = warning_service.get_warning_level_distribution(
+        db, current_user, days=days, store_id=store_id
+    )
+    return distribution
+
+
 @warning_router.get("/{warning_id}", response_model=schemas.FreshnessWarningDetailResponse)
 def get_warning_detail(
     warning_id: int,
@@ -307,111 +412,6 @@ def get_warning_disposal_records(
     ).order_by(models.WarningDisposalRecord.created_at.desc()).all()
 
     return records
-
-
-@warning_router.get("/batches/{batch_id}", response_model=List[schemas.FreshnessWarningResponse])
-def get_batch_warnings(
-    batch_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
-):
-    batch = db.query(models.MaterialBatch).filter(
-        models.MaterialBatch.id == batch_id
-    ).first()
-    if not batch:
-        raise HTTPException(status_code=404, detail="批次不存在")
-
-    if current_user.role == models.UserRole.STORE_STAFF.value:
-        if batch.store_id != current_user.store_id:
-            raise HTTPException(status_code=403, detail="无权限查看其他门店数据")
-
-    warnings = db.query(models.FreshnessWarning).filter(
-        models.FreshnessWarning.batch_id == batch_id
-    ).order_by(models.FreshnessWarning.created_at.desc()).all()
-
-    return warnings
-
-
-@warning_router.get("/statistics/overview", response_model=schemas.WarningStatsOverview)
-def get_warning_stats(
-    store_id: Optional[int] = None,
-    days: int = Query(7, ge=1, le=30, description="统计天数"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
-):
-    stats = warning_service.get_warning_stats_overview(
-        db, current_user, days=days, store_id=store_id
-    )
-    return stats
-
-
-@warning_router.get("/statistics/trend", response_model=List[Dict[str, Any]])
-def get_trend(
-    store_id: Optional[int] = None,
-    days: int = Query(7, ge=1, le=30, description="统计天数"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
-):
-    trend = warning_service.get_warning_trend(
-        db, current_user, days=days, store_id=store_id
-    )
-    return trend
-
-
-@warning_router.get("/statistics/store-ranking", response_model=List[Dict[str, Any]])
-def get_store_ranking(
-    days: int = Query(7, ge=1, le=30, description="统计天数"),
-    limit: int = Query(20, ge=1, le=100, description="返回条数"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_role(
-        models.UserRole.HQ_ADMIN.value
-    ))
-):
-    ranking = warning_service.get_store_ranking(
-        db, current_user, days=days, limit=limit
-    )
-    return ranking
-
-
-@warning_router.get("/statistics/level-distribution", response_model=List[Dict[str, Any]])
-def get_level_distribution(
-    store_id: Optional[int] = None,
-    days: int = Query(7, ge=1, le=30, description="统计天数"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
-):
-    distribution = warning_service.get_warning_level_distribution(
-        db, current_user, days=days, store_id=store_id
-    )
-    return distribution
-
-
-@warning_router.get("/my-pending", response_model=List[schemas.FreshnessWarningDetailResponse])
-def get_my_pending_warnings(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_active_user)
-):
-    query = db.query(models.FreshnessWarning).filter(
-        models.FreshnessWarning.status.in_([
-            models.WarningStatus.PENDING.value,
-            models.WarningStatus.PROCESSING.value
-        ])
-    )
-    query = _apply_data_scope(query, current_user)
-
-    if current_user.role == models.UserRole.QC_STAFF.value:
-        query = query.filter(
-            models.FreshnessWarning.stage.in_([
-                models.WarningStage.AFTER_PRODUCTION.value,
-                models.WarningStage.PENDING_QC.value
-            ])
-        )
-
-    return query.order_by(
-        models.FreshnessWarning.is_overdue.desc(),
-        models.FreshnessWarning.warning_level.desc(),
-        models.FreshnessWarning.created_at.asc()
-    ).all()
 
 
 @warning_router.post("/{warning_id}/hq-review", response_model=schemas.FreshnessWarningDetailResponse)

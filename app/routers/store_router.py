@@ -289,7 +289,6 @@ def mark_saleable(
 
     warning_service.close_warning_for_batch(
         db, batch.id, "品控抽检通过，已放行销售", current_user.id, "品控抽检完成，批次已标记为可销售")
-    warning_service.detect_freshness_warnings(db)
 
     return batch
 

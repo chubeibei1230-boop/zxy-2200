@@ -49,7 +49,11 @@ def _get_batch_stage_and_ref_time(
     stage = None
     ref_time = None
 
-    if batch.status == models.BatchStatus.READY_FOR_PRODUCTION.value:
+    if batch.status == models.BatchStatus.PENDING_ACCEPTANCE.value:
+        if batch.arrival_time:
+            stage = models.WarningStage.AFTER_ARRIVAL.value
+            ref_time = batch.arrival_time
+    elif batch.status == models.BatchStatus.READY_FOR_PRODUCTION.value:
         if batch.wash_complete_time:
             stage = models.WarningStage.AFTER_WASH.value
             ref_time = batch.wash_complete_time
@@ -100,25 +104,25 @@ def _get_max_hours_for_stage(
         models.WarningStage.AFTER_WASH.value: ["after_wash"],
         models.WarningStage.AFTER_PRODUCTION.value: ["after_production"],
         models.WarningStage.PENDING_QC.value: ["after_production", "qc_required_within_hours"],
-        models.WarningStage.READY_FOR_SALE.value: ["after_production"],
+        models.WarningStage.READY_FOR_SALE.value: ["ready_for_sale", "saleable"],
     }
 
     stage_keys = rule_stage_map.get(stage, [])
     for key in stage_keys:
-        if key == "qc_required_within_hours":
-            batch_rule = db.query(models.BatchRule).filter(
-                models.BatchRule.ingredient_category_id == ingredient_category_id,
-                models.BatchRule.is_active == True
-            ).first()
-            if batch_rule:
-                return float(batch_rule.qc_required_within_hours)
-        else:
-            freshness_rule = db.query(models.FreshnessRule).filter(
-                models.FreshnessRule.ingredient_category_id == ingredient_category_id,
-                models.FreshnessRule.stage == key
-            ).first()
-            if freshness_rule:
-                return freshness_rule.max_hours
+        freshness_rule = db.query(models.FreshnessRule).filter(
+            models.FreshnessRule.ingredient_category_id == ingredient_category_id,
+            models.FreshnessRule.stage == key
+        ).first()
+        if freshness_rule:
+            return freshness_rule.max_hours
+
+    if stage == models.WarningStage.PENDING_QC.value:
+        batch_rule = db.query(models.BatchRule).filter(
+            models.BatchRule.ingredient_category_id == ingredient_category_id,
+            models.BatchRule.is_active == True
+        ).first()
+        if batch_rule:
+            return float(batch_rule.qc_required_within_hours)
 
     return 8.0
 
@@ -142,6 +146,18 @@ def create_warning(
         ])
     ).first()
     if existing_pending:
+        return None
+
+    recently_resolved = db.query(models.FreshnessWarning).filter(
+        models.FreshnessWarning.batch_id == batch.id,
+        models.FreshnessWarning.stage == stage,
+        models.FreshnessWarning.status.in_([
+            models.WarningStatus.RESOLVED.value,
+            models.WarningStatus.CANCELLED.value
+        ]),
+        models.FreshnessWarning.processed_at >= now - timedelta(hours=1)
+    ).first()
+    if recently_resolved:
         return None
 
     elapsed_hours = (now - ref_time).total_seconds() / 3600
@@ -189,10 +205,7 @@ def detect_freshness_warnings(db: Session) -> Dict[str, Any]:
         rule_map[r.ingredient_category_id][r.stage] = r.max_hours
 
     active_batches = db.query(models.MaterialBatch).filter(
-        models.MaterialBatch.status.notin_([
-            models.BatchStatus.DISCARDED.value,
-            models.BatchStatus.PENDING_ACCEPTANCE.value
-        ])
+        models.MaterialBatch.status != models.BatchStatus.DISCARDED.value
     ).all()
 
     for batch in active_batches:
