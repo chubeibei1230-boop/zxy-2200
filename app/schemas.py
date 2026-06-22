@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -699,3 +699,126 @@ class WarningLevelDistributionItem(BaseModel):
     level_label: str
     count: int
     percentage: float
+
+
+class DisposalStatus(str):
+    pass
+
+
+class AnomalyBatchFilterParams(BaseModel):
+    store_id: Optional[int] = None
+    ingredient_category_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    batch_status: Optional[str] = None
+    anomaly_type: Optional[str] = None
+    warning_level: Optional[str] = None
+    disposal_status: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+
+
+class AnomalyBatchListItem(BaseModel):
+    batch_id: int
+    batch_no: str
+    store_id: int
+    store_name: str
+    ingredient_category_id: int
+    category_name: str
+    quantity: float
+    unit: str
+    batch_status: str
+    batch_status_label: str
+    current_stage: str
+    current_stage_label: str
+    latest_anomaly_type: Optional[str] = None
+    latest_anomaly_type_label: Optional[str] = None
+    latest_anomaly_reason: Optional[str] = None
+    responsible_role: Optional[str] = None
+    responsible_role_label: Optional[str] = None
+    remaining_deadline_hours: Optional[float] = None
+    final_disposition: Optional[str] = None
+    has_unresolved_anomaly: bool = False
+    has_pending_warning: bool = False
+    has_pending_recheck: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class AnomalyBatchTimelineItem(BaseModel):
+    event_type: str
+    event_type_label: str
+    event_time: datetime
+    operator_name: Optional[str] = None
+    description: Optional[str] = None
+    detail: Optional[Dict[str, Any]] = None
+
+
+class AnomalyBatchDetailResponse(BaseModel):
+    batch: MaterialBatchDetailResponse
+    acceptance: Optional[MaterialAcceptanceResponse] = None
+    production_records: List[ProductionRecordResponse] = []
+    qc_inspections: List[QCInspectionResponse] = []
+    anomaly_events: List[AnomalyEventResponse] = []
+    freshness_warnings: List[FreshnessWarningResponse] = []
+    recheck_applications: List[RecheckApplicationResponse] = []
+    disposal_records: List[WarningDisposalRecordResponse] = []
+    timeline: List[AnomalyBatchTimelineItem] = []
+
+
+class BatchDisposalNote(BaseModel):
+    disposal_note: str
+
+
+class DashboardOverviewStats(BaseModel):
+    period_days: int
+    total_batches: int
+    anomaly_batches: int
+    anomaly_rate: float
+    unresolved_anomaly_count: int
+    pending_warning_count: int
+    pending_recheck_count: int
+    overdue_count: int
+    disposed_count: int
+    closed_loop_rate: float
+
+
+class StoreAnomalyRankingItem(BaseModel):
+    store_id: int
+    store_name: str
+    total_batches: int
+    anomaly_batches: int
+    anomaly_rate: float
+    unresolved_count: int
+    overdue_count: int
+    rank: int
+
+
+class AnomalyTrendItem(BaseModel):
+    date: date
+    new_anomaly_count: int
+    resolved_count: int
+    overdue_count: int
+
+
+class AnomalyTypeDistributionItem(BaseModel):
+    anomaly_type: str
+    anomaly_type_label: str
+    count: int
+    percentage: float
+
+
+class QCTaskItem(BaseModel):
+    task_id: Optional[int] = None
+    task_type: str
+    task_type_label: str
+    batch_id: int
+    batch_no: str
+    store_id: int
+    store_name: str
+    category_name: str
+    batch_status: str
+    pending_hours: float
+    priority: str
+    reason: Optional[str] = None
+    deadline_at: Optional[datetime] = None
+    assigned_to: Optional[int] = None

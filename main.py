@@ -12,6 +12,7 @@ from app.routers.qc_router import qc_router
 from app.routers.stats_router import stats_router
 from app.routers.recheck_router import recheck_router
 from app.routers.warning_router import warning_router
+from app.routers.dashboard_router import dashboard_router
 from app.services import anomaly_detector
 
 
@@ -166,6 +167,7 @@ app.include_router(qc_router)
 app.include_router(stats_router)
 app.include_router(recheck_router)
 app.include_router(warning_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/", tags=["根路径"])
