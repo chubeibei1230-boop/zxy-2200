@@ -52,6 +52,38 @@ class RecheckResult(str, enum.Enum):
     FURTHER_RECHECK = "further_recheck"
 
 
+class WarningLevel(str, enum.Enum):
+    NORMAL = "normal"
+    ATTENTION = "attention"
+    WARNING = "warning"
+    URGENT = "urgent"
+
+
+class WarningStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    RESOLVED = "resolved"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class WarningStage(str, enum.Enum):
+    AFTER_ARRIVAL = "after_arrival"
+    AFTER_WASH = "after_wash"
+    AFTER_PRODUCTION = "after_production"
+    PENDING_QC = "pending_qc"
+    READY_FOR_SALE = "ready_for_sale"
+
+
+class DisposalType(str, enum.Enum):
+    STORE_NOTE = "store_note"
+    QC_INSPECTION = "qc_inspection"
+    QC_RECHECK = "qc_recheck"
+    SALE_RELEASE = "sale_release"
+    DISCARD = "discard"
+    HQ_REVIEW = "hq_review"
+
+
 class RecheckReason(str, enum.Enum):
     SCORE_BORDERLINE = "score_borderline"
     TASTE_DEVIATION = "taste_deviation"
@@ -354,3 +386,59 @@ class RecheckApplication(Base):
     rechecker = relationship("User", foreign_keys=[rechecked_by])
     canceller = relationship("User", foreign_keys=[cancelled_by])
     recheck_template = relationship("QCTemplate", foreign_keys=[recheck_template_id])
+
+
+class FreshnessWarning(Base):
+    __tablename__ = "freshness_warnings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    warning_no = Column(String(50), unique=True, index=True, nullable=False)
+    batch_id = Column(Integer, ForeignKey("material_batches.id"), nullable=False)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
+    ingredient_category_id = Column(Integer, ForeignKey("ingredient_categories.id"), nullable=False)
+    stage = Column(String(50), nullable=False)
+    warning_level = Column(String(20), nullable=False, default=WarningLevel.ATTENTION.value)
+    status = Column(String(20), nullable=False, default=WarningStatus.PENDING.value)
+    reference_time = Column(DateTime, nullable=False)
+    deadline_time = Column(DateTime, nullable=False)
+    remaining_hours = Column(Float, nullable=False)
+    max_hours = Column(Float, nullable=False)
+    elapsed_hours = Column(Float, nullable=False)
+    suggested_action = Column(Text)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    processed_at = Column(DateTime, nullable=True)
+    processed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    processing_note = Column(Text, nullable=True)
+    final_disposition = Column(String(100), nullable=True)
+    is_overdue = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    batch = relationship("MaterialBatch")
+    store = relationship("Store")
+    category = relationship("IngredientCategory")
+    processor = relationship("User", foreign_keys=[processed_by])
+    disposal_records = relationship("WarningDisposalRecord", back_populates="warning")
+
+
+class WarningDisposalRecord(Base):
+    __tablename__ = "warning_disposal_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    warning_id = Column(Integer, ForeignKey("freshness_warnings.id"), nullable=False)
+    batch_id = Column(Integer, ForeignKey("material_batches.id"), nullable=False)
+    store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
+    disposal_type = Column(String(50), nullable=False)
+    operator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    operation_time = Column(DateTime, default=datetime.utcnow)
+    disposal_note = Column(Text)
+    qc_inspection_id = Column(Integer, ForeignKey("qc_inspections.id"), nullable=True)
+    recheck_application_id = Column(Integer, ForeignKey("recheck_applications.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    warning = relationship("FreshnessWarning", back_populates="disposal_records")
+    batch = relationship("MaterialBatch")
+    store = relationship("Store")
+    operator = relationship("User", foreign_keys=[operator_id])
+    qc_inspection = relationship("QCInspection")
+    recheck_application = relationship("RecheckApplication")

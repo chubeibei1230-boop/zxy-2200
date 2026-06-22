@@ -5,6 +5,7 @@ from sqlalchemy import func, and_
 from typing import List, Optional, Dict, Any
 from app.database import get_db
 from app import models, schemas, auth
+from app.services import freshness_warning as warning_service
 
 recheck_router = APIRouter(prefix="/api/recheck", tags=["批次复检管理"])
 
@@ -49,6 +50,8 @@ def _sync_batch_status_after_recheck(
     db: Session,
     batch: models.MaterialBatch,
     recheck_result: str,
+    application_id: int,
+    current_user_id: int,
     disposition_note: Optional[str] = None
 ):
     if recheck_result == models.RecheckResult.QUALIFIED.value:
@@ -64,6 +67,25 @@ def _sync_batch_status_after_recheck(
                 anomaly.is_resolved = True
                 anomaly.resolved_at = datetime.utcnow()
                 anomaly.resolution_note = f"复检合格，状态自动解除: {disposition_note or ''}"
+
+        warning_service.close_warning_for_batch(
+            db, batch.id, "复检合格，已放行销售", current_user_id,
+            f"复检结论：合格。{disposition_note or ''}"
+        )
+        pending_warnings = db.query(models.FreshnessWarning).filter(
+            models.FreshnessWarning.batch_id == batch.id,
+            models.FreshnessWarning.status.in_([
+                models.WarningStatus.PENDING.value,
+                models.WarningStatus.PROCESSING.value
+            ])
+        ).all()
+        for w in pending_warnings:
+            warning_service.create_disposal_record(
+                db, w.id, batch.id, batch.store_id,
+                models.DisposalType.QC_RECHECK.value,
+                current_user_id, disposition_note, None, application_id
+            )
+
     elif recheck_result == models.RecheckResult.UNQUALIFIED.value:
         batch.status = models.BatchStatus.DISCARDED.value
         batch.discard_time = datetime.utcnow()
@@ -76,8 +98,28 @@ def _sync_batch_status_after_recheck(
             anomaly.is_resolved = True
             anomaly.resolved_at = datetime.utcnow()
             anomaly.resolution_note = f"批次复检不合格已废弃: {disposition_note or ''}"
+
+        warning_service.close_warning_for_batch(
+            db, batch.id, "复检不合格已废弃", current_user_id,
+            f"复检结论：不合格。{disposition_note or ''}"
+        )
+
     elif recheck_result == models.RecheckResult.FURTHER_RECHECK.value:
         batch.status = models.BatchStatus.ANOMALY_HOLD.value
+
+        pending_warnings = db.query(models.FreshnessWarning).filter(
+            models.FreshnessWarning.batch_id == batch.id,
+            models.FreshnessWarning.status.in_([
+                models.WarningStatus.PENDING.value,
+                models.WarningStatus.PROCESSING.value
+            ])
+        ).all()
+        for w in pending_warnings:
+            warning_service.create_disposal_record(
+                db, w.id, batch.id, batch.store_id,
+                models.DisposalType.QC_RECHECK.value,
+                current_user_id, f"需再次复检：{disposition_note or ''}", None, application_id
+            )
 
 
 @recheck_router.post("/applications", response_model=schemas.RecheckApplicationResponse)
@@ -345,11 +387,15 @@ def execute_recheck(
     ).first()
     if batch:
         _sync_batch_status_after_recheck(
-            db, batch, exec_in.recheck_result, exec_in.recheck_disposition_note
+            db, batch, exec_in.recheck_result, application.id,
+            current_user.id, exec_in.recheck_disposition_note
         )
 
     db.commit()
     db.refresh(application)
+
+    warning_service.detect_freshness_warnings(db)
+
     return application
 
 

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
 from app import models, schemas, auth
-from app.services import anomaly_detector
+from app.services import anomaly_detector, freshness_warning as warning_service
 
 store_router = APIRouter(prefix="/api/store", tags=["门店操作"])
 
@@ -119,6 +119,9 @@ def mark_wash_complete(
     batch.wash_complete_time = datetime.utcnow()
     db.commit()
     db.refresh(batch)
+
+    warning_service.detect_freshness_warnings(db)
+
     return batch
 
 
@@ -146,6 +149,9 @@ def start_production(
     batch.production_start_time = datetime.utcnow()
     db.commit()
     db.refresh(batch)
+
+    warning_service.detect_freshness_warnings(db)
+
     return batch
 
 
@@ -216,8 +222,15 @@ def update_production_record(
                         "high",
                         f"废弃比例{ratio:.2%}超过阈值{batch_rule.high_discard_threshold:.2%}"
                     )
+
+            warning_service.close_warning_for_batch(
+                db, batch.id, "制作完成", current_user.id, "制作完成，进入待抽检状态")
+
     db.commit()
     db.refresh(rec)
+
+    warning_service.detect_freshness_warnings(db)
+
     return rec
 
 
@@ -273,6 +286,11 @@ def mark_saleable(
     batch.sale_start_time = datetime.utcnow()
     db.commit()
     db.refresh(batch)
+
+    warning_service.close_warning_for_batch(
+        db, batch.id, "品控抽检通过，已放行销售", current_user.id, "品控抽检完成，批次已标记为可销售")
+    warning_service.detect_freshness_warnings(db)
+
     return batch
 
 
@@ -295,6 +313,10 @@ def discard_batch(
     batch.final_disposition = reason
     db.commit()
     db.refresh(batch)
+
+    warning_service.close_warning_for_batch(
+        db, batch.id, f"批次已废弃：{reason}", current_user.id, f"废弃原因：{reason}")
+
     return batch
 
 

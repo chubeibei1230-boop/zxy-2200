@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
 from app import models, schemas, auth
-from app.services import anomaly_detector
+from app.services import anomaly_detector, freshness_warning as warning_service
 
 qc_router = APIRouter(prefix="/api/qc", tags=["品控操作"])
 
@@ -104,15 +104,57 @@ def create_qc_inspection(
             ]:
                 batch.status = models.BatchStatus.READY_FOR_SALE.value
                 batch.sale_start_time = datetime.utcnow()
+
+                warning_service.close_warning_for_batch(
+                    db, batch.id, "品控抽检通过，已放行销售", current_user.id,
+                    f"抽检结论：{qc_in.disposition}。{qc_in.disposition_note or ''}"
+                )
+                pending_warnings = db.query(models.FreshnessWarning).filter(
+                    models.FreshnessWarning.batch_id == batch.id,
+                    models.FreshnessWarning.status.in_([
+                        models.WarningStatus.PENDING.value,
+                        models.WarningStatus.PROCESSING.value
+                    ])
+                ).all()
+                for w in pending_warnings:
+                    warning_service.create_disposal_record(
+                        db, w.id, batch.id, batch.store_id,
+                        models.DisposalType.QC_INSPECTION.value,
+                        current_user.id, qc_in.disposition_note, inspection.id
+                    )
+
         elif "废弃" in qc_in.disposition or "报废" in qc_in.disposition:
             batch.status = models.BatchStatus.DISCARDED.value
             batch.discard_time = datetime.utcnow()
             batch.final_disposition = qc_in.disposition_note or qc_in.disposition
+
+            warning_service.close_warning_for_batch(
+                db, batch.id, f"品控抽检不合格已废弃", current_user.id,
+                f"抽检结论：{qc_in.disposition}。{qc_in.disposition_note or ''}"
+            )
+
         elif "留观" in qc_in.disposition or "复检" in qc_in.disposition:
             batch.status = models.BatchStatus.ANOMALY_HOLD.value
             _auto_create_recheck_from_qc(db, inspection, batch, current_user)
+
+            pending_warnings = db.query(models.FreshnessWarning).filter(
+                models.FreshnessWarning.batch_id == batch.id,
+                models.FreshnessWarning.status.in_([
+                    models.WarningStatus.PENDING.value,
+                    models.WarningStatus.PROCESSING.value
+                ])
+            ).all()
+            for w in pending_warnings:
+                warning_service.create_disposal_record(
+                    db, w.id, batch.id, batch.store_id,
+                    models.DisposalType.QC_INSPECTION.value,
+                    current_user.id, f"需复检：{qc_in.disposition_note or ''}", inspection.id
+                )
     db.commit()
     db.refresh(inspection)
+
+    warning_service.detect_freshness_warnings(db)
+
     return inspection
 
 
@@ -144,15 +186,57 @@ def update_qc_inspection(
             ]:
                 batch.status = models.BatchStatus.READY_FOR_SALE.value
                 batch.sale_start_time = datetime.utcnow()
+
+                warning_service.close_warning_for_batch(
+                    db, batch.id, "品控抽检通过，已放行销售", current_user.id,
+                    f"抽检结论：{qc_in.disposition}。{qc_in.disposition_note or ''}"
+                )
+                pending_warnings = db.query(models.FreshnessWarning).filter(
+                    models.FreshnessWarning.batch_id == batch.id,
+                    models.FreshnessWarning.status.in_([
+                        models.WarningStatus.PENDING.value,
+                        models.WarningStatus.PROCESSING.value
+                    ])
+                ).all()
+                for w in pending_warnings:
+                    warning_service.create_disposal_record(
+                        db, w.id, batch.id, batch.store_id,
+                        models.DisposalType.QC_INSPECTION.value,
+                        current_user.id, qc_in.disposition_note, inspection.id
+                    )
+
         elif "废弃" in qc_in.disposition or "报废" in qc_in.disposition:
             batch.status = models.BatchStatus.DISCARDED.value
             batch.discard_time = datetime.utcnow()
             batch.final_disposition = qc_in.disposition_note or qc_in.disposition
+
+            warning_service.close_warning_for_batch(
+                db, batch.id, f"品控抽检不合格已废弃", current_user.id,
+                f"抽检结论：{qc_in.disposition}。{qc_in.disposition_note or ''}"
+            )
+
         elif "留观" in qc_in.disposition or "复检" in qc_in.disposition:
             batch.status = models.BatchStatus.ANOMALY_HOLD.value
             _auto_create_recheck_from_qc(db, inspection, batch, current_user)
+
+            pending_warnings = db.query(models.FreshnessWarning).filter(
+                models.FreshnessWarning.batch_id == batch.id,
+                models.FreshnessWarning.status.in_([
+                    models.WarningStatus.PENDING.value,
+                    models.WarningStatus.PROCESSING.value
+                ])
+            ).all()
+            for w in pending_warnings:
+                warning_service.create_disposal_record(
+                    db, w.id, batch.id, batch.store_id,
+                    models.DisposalType.QC_INSPECTION.value,
+                    current_user.id, f"需复检：{qc_in.disposition_note or ''}", inspection.id
+                )
     db.commit()
     db.refresh(inspection)
+
+    warning_service.detect_freshness_warnings(db)
+
     return inspection
 
 

@@ -568,3 +568,134 @@ class RecheckOverviewStats(BaseModel):
     cancelled: int
     overdue: int
     avg_processing_hours: float
+
+
+class FreshnessWarningBase(BaseModel):
+    batch_id: int
+    stage: str
+    warning_level: Optional[str] = "attention"
+    suggested_action: Optional[str] = None
+
+
+class FreshnessWarningCreate(FreshnessWarningBase):
+    pass
+
+
+class FreshnessWarningStoreNote(BaseModel):
+    processing_note: str
+
+
+class FreshnessWarningProcess(BaseModel):
+    processing_note: str
+    final_disposition: str
+
+
+class FreshnessWarningResponse(BaseModel):
+    id: int
+    warning_no: str
+    batch_id: int
+    store_id: int
+    ingredient_category_id: int
+    stage: str
+    warning_level: str
+    status: str
+    reference_time: datetime
+    deadline_time: datetime
+    remaining_hours: float
+    max_hours: float
+    elapsed_hours: float
+    suggested_action: Optional[str] = None
+    detected_at: datetime
+    processed_at: Optional[datetime] = None
+    processed_by: Optional[int] = None
+    processing_note: Optional[str] = None
+    final_disposition: Optional[str] = None
+    is_overdue: bool
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FreshnessWarningDetailResponse(FreshnessWarningResponse):
+    batch: Optional[MaterialBatchDetailResponse] = None
+    store: Optional[StoreResponse] = None
+    category: Optional[IngredientCategoryResponse] = None
+    processor: Optional[UserResponse] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WarningDisposalRecordBase(BaseModel):
+    warning_id: int
+    disposal_type: str
+    disposal_note: Optional[str] = None
+    qc_inspection_id: Optional[int] = None
+    recheck_application_id: Optional[int] = None
+
+
+class WarningDisposalRecordCreate(WarningDisposalRecordBase):
+    pass
+
+
+class WarningDisposalRecordResponse(BaseModel):
+    id: int
+    warning_id: int
+    batch_id: int
+    store_id: int
+    disposal_type: str
+    operator_id: int
+    operation_time: datetime
+    disposal_note: Optional[str] = None
+    qc_inspection_id: Optional[int] = None
+    recheck_application_id: Optional[int] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WarningFilterParams(BaseModel):
+    store_id: Optional[int] = None
+    ingredient_category_id: Optional[int] = None
+    batch_id: Optional[int] = None
+    batch_no: Optional[str] = None
+    stage: Optional[str] = None
+    warning_level: Optional[str] = None
+    status: Optional[str] = None
+    is_overdue: Optional[bool] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+
+
+class WarningStatsOverview(BaseModel):
+    period_days: int
+    total_warnings: int
+    pending_count: int
+    processing_count: int
+    resolved_count: int
+    expired_count: int
+    cancelled_count: int
+    processed_rate: float
+    overdue_count: int
+    new_today: int
+
+
+class WarningTrendItem(BaseModel):
+    date: date
+    new_count: int
+    resolved_count: int
+    overdue_count: int
+
+
+class StoreWarningRankingItem(BaseModel):
+    store_id: int
+    store_name: str
+    warning_count: int
+    resolved_count: int
+    processed_rate: float
+    overdue_count: int
+    rank: int
+
+
+class WarningLevelDistributionItem(BaseModel):
+    warning_level: str
+    level_label: str
+    count: int
+    percentage: float
