@@ -336,18 +336,17 @@ def main():
     print(f"  ✅ 系统已自动创建复检申请: app_no={auto_rc['application_no']}, source={auto_rc['recheck_source']}")
     auto_rc_id = auto_rc["id"]
 
-    print("\n【6.3】角色权限控制测试")
+    print("\n【6.3】角色权限控制测试 - 品控不可直接发起复检申请")
     ok, detail = expect_error(
-        lambda: http_post("/api/recheck/applications", {"batch_id": bid_rc}, qc_token),
-        "已有待处理或进行中的复检申请"
+        lambda: http_post("/api/recheck/applications", {"batch_id": bid_rc, "recheck_reason": "other"}, qc_token),
+        None
     )
     if ok:
-        print(f"  ✅ 防止重复申请复检正确拦截: {detail[:60]}")
+        print(f"  ✅ 品控人员不可直接发起复检申请被正确拦截: {detail[:60]}")
+    else:
+        print(f"  ❌ 品控人员不应能直接发起复检申请！")
+        raise AssertionError("权限修复验证失败：品控人员不应能直接发起复检申请")
 
-    other_store_batch = {
-        "batch_id": bid_rc,
-        "recheck_reason": "other"
-    }
     qc_user_token = http_post("/api/auth/login", {"username": "qc_staff", "password": "qc123456"},
                               content_type="application/x-www-form-urlencoded")["access_token"]
     rc_list_store = http_get("/api/recheck/applications", store_token)
@@ -358,7 +357,40 @@ def main():
     rc_list_qc = http_get("/api/recheck/applications", qc_user_token)
     print(f"  ✅ 品控人员可查看全部复检数据: {len(rc_list_qc)} 条")
 
-    print("\n【6.4】品控分配并执行复检 - 复检合格场景")
+    print("\n【6.4】品控不可自行分配任务、不可直接执行pending任务")
+    ok_assign, assign_detail = expect_error(
+        lambda: http_post(f"/api/recheck/applications/{rc_app_id}/assign",
+                          {"assigned_to": 1}, qc_user_token),
+        None
+    )
+    if ok_assign:
+        print(f"  ✅ 品控人员不可自行分配复检任务被正确拦截: {assign_detail[:60]}")
+    else:
+        print(f"  ❌ 品控人员不应能自行分配复检任务！")
+        raise AssertionError("权限修复验证失败：品控人员不可自行分配任务")
+
+    ok_start, start_detail = expect_error(
+        lambda: http_post(f"/api/recheck/applications/{auto_rc_id}/start", {}, qc_user_token),
+        None
+    )
+    if ok_start:
+        print(f"  ✅ 品控人员不可自行领取pending任务被正确拦截: {start_detail[:60]}")
+    else:
+        print(f"  ❌ 品控人员不应能自行领取pending任务！")
+        raise AssertionError("权限修复验证失败：品控人员不可自行领取待处理任务")
+
+    ok_execute_pending, exec_detail = expect_error(
+        lambda: http_post(f"/api/recheck/applications/{auto_rc_id}/execute",
+                          {"recheck_result": "qualified"}, qc_user_token),
+        None
+    )
+    if ok_execute_pending:
+        print(f"  ✅ 品控人员不可直接执行pending状态任务被正确拦截: {exec_detail[:60]}")
+    else:
+        print(f"  ❌ 品控人员不应能直接执行pending状态任务！")
+        raise AssertionError("权限修复验证失败：品控人员不可直接执行pending状态任务")
+
+    print("\n【6.5】总部分配后品控可执行复检 - 复检合格场景")
     qc_users = http_get("/api/users", hq_token)
     qc_user_id = None
     for u in qc_users:
@@ -396,7 +428,12 @@ def main():
     assert b_after_pass["status"] == "ready_for_sale", f"复检合格后批次应为ready_for_sale，实际={b_after_pass['status']}"
     print(f"  ✅ 批次状态已同步为 ready_for_sale（可销售）")
 
-    print("\n【6.5】品控执行复检 - 复检不合格废弃场景")
+    print("\n【6.6】品控执行复检 - 复检不合格废弃场景")
+    http_post(
+        f"/api/recheck/applications/{auto_rc_id}/assign",
+        {"assigned_to": qc_user_id},
+        hq_token
+    )
     execute_fail = {
         "appearance_score": 45,
         "taste_score": 40,
@@ -422,7 +459,91 @@ def main():
     open_anomalies = http_get(f"/api/qc/batches/{bid_rc2}/anomalies?is_resolved=false", qc_user_token)
     print(f"  ✅ 关联异常事件已自动标记为已解决: 剩余未解决={len(open_anomalies)} 条")
 
-    print("\n【6.6】复检申请取消功能测试")
+    print("\n【6.7】需再次复检 - 结果清空、待办与统计口径一致")
+    batch_data_rc_further = {
+        "batch_no": f"BATCH-TEST-FURTHER-{suffix}",
+        "store_id": store_id,
+        "ingredient_category_id": cat_id,
+        "quantity": 3.0,
+        "unit": "kg"
+    }
+    b_further = http_post("/api/store/batches", batch_data_rc_further, store_token)
+    bid_further = b_further["id"]
+    acc_further = {"batch_id": bid_further, "accepted_quantity": 3.0, "is_accepted": True}
+    http_post("/api/store/acceptance", acc_further, store_token)
+    http_post(f"/api/store/batches/{bid_further}/wash-complete", {}, store_token)
+    http_post(f"/api/store/batches/{bid_further}/start-production", {}, store_token)
+    rec_further = http_post("/api/store/production-records", {"batch_id": bid_further, "station_id": station_id}, store_token)
+    http_put(f"/api/store/production-records/{rec_further['id']}",
+             {"end_time": "2026-06-21T18:00:00", "cups_produced": 30, "cups_discarded": 0},
+             store_token)
+
+    rc_further_app = http_post("/api/recheck/applications", {
+        "batch_id": bid_further,
+        "recheck_reason": "score_borderline",
+        "reason_detail": "评分临界，需进一步确认"
+    }, store_token)
+    rc_further_id = rc_further_app["id"]
+
+    http_post(
+        f"/api/recheck/applications/{rc_further_id}/assign",
+        {"assigned_to": qc_user_id},
+        hq_token
+    )
+    execute_further = {
+        "appearance_score": 72,
+        "taste_score": 68,
+        "texture_score": 74,
+        "overall_score": 71,
+        "recheck_check_result": "评分处于临界区间，建议安排二次复检",
+        "recheck_disposition_note": "当前结果不确定，需再次复检",
+        "recheck_result": "further_recheck"
+    }
+    rc_further_result = http_post(
+        f"/api/recheck/applications/{rc_further_id}/execute",
+        execute_further,
+        qc_user_token
+    )
+    assert rc_further_result["status"] == "pending", f"需再次复检后状态应回到pending，实际={rc_further_result['status']}"
+    assert rc_further_result["recheck_result"] is None, f"需再次复检后recheck_result应被清空，实际={rc_further_result['recheck_result']}"
+    assert rc_further_result["overall_score"] is None, f"需再次复检后评分应被清空"
+    assert rc_further_result["assigned_to"] is None, f"需再次复检后分配信息应被清空"
+    print(f"  ✅ 选'需再次复检'后: status=pending, recheck_result=None, 评分/分配信息已清空")
+
+    rc_result_dist = http_get("/api/recheck/statistics/result-distribution?days=30", hq_token)
+    further_in_dist = any(r["result"] == "further_recheck" for r in rc_result_dist)
+    assert not further_in_dist, "需再次复检不应出现在结果分布统计中（recheck_result已清空）"
+    print(f"  ✅ 统计结果分布中不包含'需再次复检'，口径与待办一致")
+
+    rc_my_todos_before = http_get("/api/recheck/my-todos", qc_user_token)
+    further_in_todos = any(t["id"] == rc_further_id for t in rc_my_todos_before)
+    assert further_in_todos, "需再次复检的任务应出现在品控待办中"
+    print(f"  ✅ 需再次复检的任务正确出现在品控待办中（status=pending）")
+
+    http_post(
+        f"/api/recheck/applications/{rc_further_id}/assign",
+        {"assigned_to": qc_user_id},
+        hq_token
+    )
+    execute_final = {
+        "appearance_score": 85,
+        "taste_score": 82,
+        "texture_score": 86,
+        "overall_score": 84,
+        "recheck_check_result": "二次复检各项指标合格",
+        "recheck_disposition_note": "二次复检通过",
+        "recheck_result": "qualified"
+    }
+    rc_final = http_post(
+        f"/api/recheck/applications/{rc_further_id}/execute",
+        execute_final,
+        qc_user_token
+    )
+    assert rc_final["status"] == "passed"
+    assert rc_final["recheck_result"] == "qualified"
+    print(f"  ✅ 再次分配后二次复检合格: status=passed, recheck_result=qualified")
+
+    print("\n【6.8】复检申请取消功能测试")
     batch_data_rc3 = {
         "batch_no": f"BATCH-TEST-CANCEL-{suffix}",
         "store_id": store_id,
@@ -456,7 +577,7 @@ def main():
     assert cancel_result["status"] == "cancelled", f"取消后状态应为cancelled"
     print(f"  ✅ 门店申请人成功取消复检申请，状态={cancel_result['status']}")
 
-    print("\n【6.7】复检统计数据 - 概览、分布、趋势、超时列表")
+    print("\n【6.9】复检统计数据 - 概览、分布、趋势、超时列表")
     rc_overview = http_get("/api/recheck/statistics/overview?days=30", hq_token)
     print(f"  ✅ 复检概览统计: 总数={rc_overview['total']}, 待处理={rc_overview['pending']}, "
           f"已通过={rc_overview['passed']}, 已失败={rc_overview['failed']}, 超时={rc_overview['overdue']}")
@@ -476,7 +597,7 @@ def main():
     rc_my_todos = http_get("/api/recheck/my-todos", qc_user_token)
     print(f"  ✅ 品控个人待办: {len(rc_my_todos)} 条待处理")
 
-    print("\n【6.8】统计看板同步 - 概览和待办中的复检数据")
+    print("\n【6.10】统计看板同步 - 概览和待办中的复检数据")
     stats_overview = http_get("/api/stats/overview?days=30", hq_token)
     assert "total_recheck_applications" in stats_overview, "统计概览缺少复检数据"
     print(f"  ✅ 统计看板概览已包含复检指标: 复检总数={stats_overview['total_recheck_applications']}, "
@@ -490,7 +611,7 @@ def main():
     for todo in qc_todos_updated[:3]:
         print(f"    - 类型={todo.get('task_type', 'N/A')}, 批次={todo['batch_no']}, 优先级={todo['priority']}")
 
-    print("\n【6.9】复检批次关联历史查询")
+    print("\n【6.11】复检批次关联历史查询")
     rc_history = http_get(f"/api/recheck/batches/{bid_rc}/applications", store_token)
     print(f"  ✅ 批次 {bid_rc} 复检历史: {len(rc_history)} 条记录")
     for item in rc_history:
@@ -505,7 +626,9 @@ def main():
     print("   ✓ 门店发起复检申请 & 品控留观自动创建")
     print("   ✓ 批次状态自动同步（留观、合格放行、不合格废弃）")
     print("   ✓ 异常事件自动同步标记解决")
-    print("   ✓ 角色权限 & 数据范围控制")
+    print("   ✓ [修复] 品控人员不可直接发起复检申请")
+    print("   ✓ [修复] 品控人员不可自行分配/领取任务，需总部分配")
+    print("   ✓ [修复] 需再次复检时结果清空，待办与统计口径一致")
     print("   ✓ 复检分配、执行、取消、完整流程")
     print("   ✓ 复检统计：概览/结果分布/趋势/超时列表/个人待办")
     print("   ✓ 统计看板同步：概览指标 & QC待办列表")

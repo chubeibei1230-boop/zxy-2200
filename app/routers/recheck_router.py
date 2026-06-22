@@ -32,7 +32,7 @@ def _resolve_store_id(
         if target_store_id and target_store_id != current_user.store_id:
             raise HTTPException(status_code=403, detail="无权限操作其他门店数据")
         return current_user.store_id
-    if current_user.role in (models.UserRole.HQ_ADMIN.value, models.UserRole.QC_STAFF.value):
+    if current_user.role == models.UserRole.HQ_ADMIN.value:
         if not target_store_id:
             raise HTTPException(status_code=400, detail="请指定门店ID")
         return target_store_id
@@ -86,8 +86,7 @@ def create_recheck_application(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_role(
         models.UserRole.STORE_STAFF.value,
-        models.UserRole.HQ_ADMIN.value,
-        models.UserRole.QC_STAFF.value
+        models.UserRole.HQ_ADMIN.value
     ))
 ):
     batch = db.query(models.MaterialBatch).filter(
@@ -200,8 +199,7 @@ def assign_recheck(
     assign_in: schemas.RecheckApplicationAssign,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_role(
-        models.UserRole.HQ_ADMIN.value,
-        models.UserRole.QC_STAFF.value
+        models.UserRole.HQ_ADMIN.value
     ))
 ):
     application = db.query(models.RecheckApplication).filter(
@@ -249,6 +247,11 @@ def start_recheck(
         raise HTTPException(status_code=404, detail="复检申请不存在")
 
     if application.status == models.RecheckStatus.PENDING.value:
+        if current_user.role == models.UserRole.QC_STAFF.value:
+            raise HTTPException(
+                status_code=403,
+                detail="品控人员不可自行领取待处理任务，需由总部管理员分配后方可开始"
+            )
         application.assigned_to = current_user.id
         application.assigned_at = datetime.utcnow()
         application.status = models.RecheckStatus.IN_PROGRESS.value
@@ -285,9 +288,8 @@ def execute_recheck(
 
     if application.status not in [
         models.RecheckStatus.IN_PROGRESS.value,
-        models.RecheckStatus.PENDING.value
     ]:
-        raise HTTPException(status_code=400, detail=f"当前状态[{application.status}]不可执行复检")
+        raise HTTPException(status_code=400, detail=f"当前状态[{application.status}]不可执行复检，需先由总部分配后方可执行")
 
     if application.assigned_to and application.assigned_to != current_user.id \
             and current_user.role != models.UserRole.HQ_ADMIN.value:
@@ -303,11 +305,6 @@ def execute_recheck(
         ).first()
         if not tpl:
             raise HTTPException(status_code=400, detail="品控模板不存在")
-
-    if application.status == models.RecheckStatus.PENDING.value:
-        application.assigned_to = current_user.id
-        application.assigned_at = datetime.utcnow()
-        application.status = models.RecheckStatus.IN_PROGRESS.value
 
     if not application.recheck_started_at:
         application.recheck_started_at = datetime.utcnow()
@@ -329,6 +326,14 @@ def execute_recheck(
         application.status = models.RecheckStatus.FAILED.value
     elif exec_in.recheck_result == models.RecheckResult.FURTHER_RECHECK.value:
         application.status = models.RecheckStatus.PENDING.value
+        application.recheck_result = None
+        application.recheck_template_id = None
+        application.appearance_score = None
+        application.taste_score = None
+        application.texture_score = None
+        application.overall_score = None
+        application.recheck_check_result = None
+        application.recheck_disposition_note = None
         application.recheck_started_at = None
         application.assigned_to = None
         application.assigned_at = None
