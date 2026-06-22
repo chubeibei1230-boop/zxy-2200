@@ -71,10 +71,6 @@ def _get_batch_stage_and_ref_time(
     elif batch.status == models.BatchStatus.ANOMALY_HOLD.value:
         stage = models.WarningStage.PENDING_QC.value
         ref_time = batch.production_complete_time or batch.wash_complete_time or batch.arrival_time
-    elif batch.status == models.BatchStatus.READY_FOR_SALE.value:
-        stage = models.WarningStage.READY_FOR_SALE.value
-        ref_time = batch.sale_start_time or batch.production_complete_time
-
     return stage, ref_time
 
 
